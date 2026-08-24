@@ -266,11 +266,27 @@ def speech_windows(y: np.ndarray, sr: int):
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-PROCESSOR = AutoFeatureExtractor.from_pretrained(s.base_model)
-MODEL = AutoModelForAudioClassification.from_pretrained(s.base_model).to(DEVICE).eval()
+PROCESSOR = None
+MODEL = None
+_MODEL_LOCK = __import__("threading").Lock()
+
+
+def load_model() -> None:
+    global PROCESSOR, MODEL
+    if MODEL is not None and PROCESSOR is not None:
+        return
+    with _MODEL_LOCK:
+        if MODEL is None or PROCESSOR is None:
+            print(f"[GhostVoice] Loading model: {s.base_model}")
+            PROCESSOR = AutoFeatureExtractor.from_pretrained(s.base_model)
+            MODEL = AutoModelForAudioClassification.from_pretrained(
+                s.base_model
+            ).to(DEVICE).eval()
+            print(f"[GhostVoice] Model loaded on {DEVICE}")
 
 
 def base_score(y: np.ndarray) -> float:
+    load_model()
     inputs = PROCESSOR(y, sampling_rate=16000, return_tensors="pt", padding=True)
     inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
     with torch.inference_mode():
