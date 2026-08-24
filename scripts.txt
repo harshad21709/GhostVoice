@@ -1,0 +1,16 @@
+# Exact setup order
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+Copy-Item .env.example .env
+python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+notepad .env
+New-Item -ItemType Directory -Force data\encrypted
+ffmpeg -version
+uvicorn app:app --host 127.0.0.1 --port 8000
+# In Terminal 2:
+caddy version
+caddy run --config Caddyfile
+# Open: https://localhost:8443

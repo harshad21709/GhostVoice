@@ -1,0 +1,12 @@
+services:
+  ghostvoice:
+    build: .
+    env_file: [.env]
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: [ghostvoice_data:/app/data]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp:size=256m,noexec,nosuid,nodev]
+volumes:
+  ghostvoice_data:

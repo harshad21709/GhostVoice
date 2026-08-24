@@ -1,0 +1,6 @@
+execute this in the terminal to use the app offline:
+
+$env:HF_HOME="D:\GhostVoice\GhostVoice-3\HFCache"
+$env:HF_HUB_OFFLINE="1"
+$env:TRANSFORMERS_OFFLINE="1"
+.\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000

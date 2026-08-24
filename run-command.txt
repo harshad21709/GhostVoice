@@ -1,0 +1,15 @@
+terminal 1:
+
+cd "D:\GhostVoice\GhostVoice-3"
+
+$env:HF_HOME="D:\GhostVoice\GhostVoice-3\HFCache"
+Remove-Item Env:HF_HUB_OFFLINE -ErrorAction SilentlyContinue
+Remove-Item Env:TRANSFORMERS_OFFLINE -ErrorAction SilentlyContinue
+
+.\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
+
+terminal 2:
+
+cd "D:\GhostVoice\GhostVoice-3"
+
+& "D:\GhostVoice\caddy\caddy.exe" run --config "D:\GhostVoice\GhostVoice-3\Caddyfile"
