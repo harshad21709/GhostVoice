@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+
+  <meta charset="utf-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  >
+
+  <meta
+    name="theme-color"
+    content="#050812"
+  >
+
+  <meta
+    name="description"
+    content="GhostVoice private AI voice authenticity analysis"
+  >
+
+  <link
+    rel="icon"
+    href="/static/favicon.ico"
+    sizes="any"
+  >
+
+  <link
+    rel="icon"
+    type="image/png"
+    sizes="32x32"
+    href="/static/ghostvoice-32.png"
+  >
+
+  <title>
+    GhostVoice — Private Voice Intelligence
+  </title>
+
+  <link
+    rel="stylesheet"
+    href="/static/style.css"
+  >
+
+</head>
+
+
+<body>
+
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <div class="scanlines"></div>
+  <div class="grid"></div>
+
+
+  <main class="shell">
+
+    <header class="topbar">
+
+      <a
+        class="brand"
+        href="/"
+        aria-label="GhostVoice home"
+      >
+
+        <img
+          src="/static/ghostvoice-logo.png"
+          alt=""
+          class="brand-logo"
+        >
+
+        <span>
+          <strong>GHOSTVOICE</strong>
+          <small>
+            PRIVATE VOICE INTELLIGENCE
+          </small>
+        </span>
+
+      </a>
+
+
+      <div class="security-status">
+
+        <span class="status-dot"></span>
+
+        <span id="status">
+          SECURE ENGINE
+        </span>
+
+      </div>
+
+    </header>
+
+
+    <!-- =====================================================
+         AUTH
+    ====================================================== -->
+
+    <section
+      id="auth"
+      class="auth-screen"
+    >
+
+      <div class="auth-visual">
+
+        <div class="orb large-orb">
+
+          <div class="orb-core">
+
+            <img
+              src="/static/ghostvoice-logo.png"
+              alt="GhostVoice"
+            >
+
+          </div>
+
+        </div>
+
+
+        <div class="eyebrow">
+          PRIVATE AUDIO FORENSICS
+        </div>
+
+        <h1>
+          Hear what<br>
+          <em>isn't there.</em>
+        </h1>
+
+        <p>
+          Analyze suspicious voices with a
+          privacy-first detection workspace.
+          Your saved recordings are encrypted
+          and tied to your account.
+        </p>
+
+
+        <div class="trust-row">
+
+          <span>
+            ◈ ENCRYPTED STORAGE
+          </span>
+
+          <span>
+            ◈ SECURE SESSION
+          </span>
+
+          <span>
+            ◈ MINIMAL METADATA
+          </span>
+
+        </div>
+
+      </div>
+
+
+      <div class="auth-card glass">
+
+        <div class="auth-heading">
+
+          <span
+            class="eyebrow"
+            id="auth-eyebrow"
+          >
+            PRIVATE MODE
+          </span>
+
+          <h2 id="auth-title">
+            ENTER GHOSTVOICE
+          </h2>
+
+          <p id="auth-description">
+            Sign in to access your private
+            analysis workspace.
+          </p>
+
+        </div>
+
+
+        <form
+          id="auth-form"
+          autocomplete="on"
+        >
+
+          <label>
+
+            <span><h1>
+              USERNAME
+            </h1></span>
+
+            <input
+              id="user"
+              name="username"
+              autocomplete="username"
+              minlength="3"
+              maxlength="64"
+              required
+            >
+
+          </label>
+
+
+          <label>
+
+            <span><h1>
+              PASSWORD
+            </h1></span>
+
+            <input
+              id="pass"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              minlength="12"
+              maxlength="256"
+              required
+            >
+
+          </label>
+
+
+          <button
+            id="auth-submit"
+            class="primary"
+            type="submit"
+          >
+            SIGN IN
+          </button>
+
+
+          <button
+            id="auth-switch"
+            class="secondary"
+            type="button"
+          >
+            CREATE ACCOUNT
+          </button>
+
+
+          <p
+            id="msg"
+            class="message"
+            role="alert"
+          ></p>
+
+        </form>
+
+
+        <div class="auth-foot">
+
+          <span>
+            🔒 Session protected
+          </span>
+
+          <span>
+            ◎ HTTPS READY
+          </span>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         APPLICATION
+    ====================================================== -->
+
+    <section
+      id="app"
+      class="hidden"
+    >
+
+      <div class="workspace-head">
+
+        <div>
+
+          <span class="eyebrow">
+            GHOSTVOICE / PRIVATE WORKSPACE
+          </span>
+
+          <h1>
+            Voice authenticity,
+            without the noise.
+          </h1>
+
+          <p>
+            Use live capture or upload a recording.
+            Results are probabilistic, not proof
+            of identity.
+          </p>
+
+        </div>
+
+
+        <button
+          id="logout"
+          class="logout"
+        >
+          END SESSION
+        </button>
+
+      </div>
+
+
+      <nav
+        class="tabs"
+        aria-label="GhostVoice tools"
+      >
+
+        <button
+          class="tab active"
+          data-t="live"
+        >
+          LIVE ANALYSIS
+        </button>
+
+        <button
+          class="tab"
+          data-t="file"
+        >
+          RECORDING
+        </button>
+
+        <button
+          class="tab"
+          data-t="library"
+        >
+          ENCRYPTED LIBRARY
+        </button>
+
+      </nav>
+
+
+      <!-- ===================================================
+           LIVE
+      ==================================================== -->
+
+      <section
+        id="live"
+        class="panel"
+      >
+
+        <div class="analysis-grid">
+
+
+          <div class="detector-card glass">
+
+            <div class="card-top">
+
+              <div>
+
+                <span class="eyebrow">
+                  LIVE CHANNEL
+                </span>
+
+                <h2>
+                  Private listening chamber
+                </h2>
+
+              </div>
+
+              <span class="mini-lock">
+                🔐 LOCAL SESSION
+              </span>
+
+            </div>
+
+
+            <div class="visualizer-wrap">
+
+              <div
+                id="bars"
+                class="bars"
+                aria-hidden="true"
+              ></div>
+
+
+              <div class="detector-center">
+
+                <div class="orb detector-orb">
+
+                  <div class="orb-ring"></div>
+
+                  <div class="orb-core">
+
+                    <img
+                      src="/static/ghostvoice-logo.png"
+                      alt=""
+                    >
+
+                    <!-- IMPORTANT:
+                         This is the circle text. -->
+                    <span
+                      id="circle-status"
+                      class="circle-status"
+                    >
+                      READY
+                    </span>
+
+                  </div>
+
+                </div>
+
+
+                <div
+                  id="verdict"
+                  class="verdict"
+                >
+                  READY
+                </div>
+
+
+                <div
+                  id="confidence"
+                  class="confidence"
+                >
+                  Start a private voice scan.
+                </div>
+
+
+                <div
+                  id="recording-timer"
+                  class="recording-timer"
+                  aria-live="polite"
+                >
+                  00:00 / 03:00
+                </div>
+
+              </div>
+
+            </div>
+
+
+            <div class="controls">
+
+              <button
+                id="start"
+                class="primary"
+              >
+                START LIVE ANALYSIS
+              </button>
+
+              <button
+                id="stop"
+                class="secondary"
+                disabled
+              >
+                STOP
+              </button>
+
+              <button
+                id="save"
+                class="secondary"
+                disabled
+              >
+                SAVE ENCRYPTED
+              </button>
+
+            </div>
+
+
+            <div class="privacy-strip">
+
+              <span>
+                ● MICROPHONE ACTIVE ONLY DURING CAPTURE
+              </span>
+
+              <span>
+                ● RECORDING IS NOT SAVED UNLESS YOU CHOOSE
+              </span>
+
+            </div>
+
+          </div>
+
+
+          <aside class="side-card glass">
+
+            <span class="eyebrow">
+              SIGNAL GUIDE
+            </span>
+
+
+            <div class="signal-item">
+
+              <span class="signal-icon human">
+                H
+              </span>
+
+              <div>
+                <strong>
+                  HUMAN
+                </strong>
+
+                <small>
+                  Low AI signal
+                </small>
+              </div>
+
+            </div>
+
+
+            <div class="signal-item">
+
+              <span class="signal-icon ai">
+                A
+              </span>
+
+              <div>
+
+                <strong>
+                  AI-GENERATED
+                </strong>
+
+                <small>
+                  High AI signal
+                </small>
+
+              </div>
+
+            </div>
+
+
+            <div class="signal-item">
+
+              <span class="signal-icon uncertain">
+                ?
+              </span>
+
+              <div>
+
+                <strong>
+                  UNCERTAIN
+                </strong>
+
+                <small>
+                  Signals disagree
+                </small>
+
+              </div>
+
+            </div>
+
+
+            <div class="security-box">
+
+              <span><h1>
+                TRUST MODEL
+              </h1></span>
+
+              <p>
+                GhostVoice reports model
+                probabilities and window agreement.
+                It should not be used as the sole
+                basis for identity, fraud, legal,
+                or employment decisions.
+              </p>
+
+            </div>
+
+          </aside>
+
+        </div>
+
+      </section>
+
+
+      <!-- ===================================================
+           RECORDING
+      ==================================================== -->
+
+      <section
+        id="file"
+        class="panel hidden"
+      >
+
+        <div class="section-heading">
+
+          <span class="eyebrow">
+            RECORDED AUDIO
+          </span>
+
+          <h2>
+            Bring a voice into the chamber.
+          </h2>
+
+        </div>
+
+
+        <label
+          class="drop glass"
+          for="fi"
+        >
+
+          <input
+            id="fi"
+            type="file"
+            accept="
+              audio/wav,
+              audio/mpeg,
+              audio/mp4,
+              audio/ogg,
+              audio/webm,
+              audio/flac,
+              audio/aac
+            "
+          >
+
+          <img
+            src="/static/ghostvoice-128.png"
+            alt=""
+          >
+
+          <strong>
+            SELECT AUDIO
+          </strong>
+
+          <span>
+            WAV · FLAC · MP3 · M4A · OGG · WEBM · OPUS
+          </span>
+
+          <small>
+            Maximum recording length:
+            03:00 · Maximum upload:
+            100 MB
+          </small>
+
+        </label>
+
+
+        <div
+          id="fr"
+          class="result-card glass"
+        >
+
+          <span class="eyebrow">
+            ANALYSIS RESULT
+          </span>
+
+          <strong>
+            Waiting for a recording...
+          </strong>
+
+        </div>
+
+      </section>
+
+
+      <!-- ===================================================
+           LIBRARY
+      ==================================================== -->
+
+      <section
+        id="library"
+        class="panel hidden"
+      >
+
+        <div class="section-heading">
+
+          <span class="eyebrow">
+            PRIVATE STORAGE
+          </span>
+
+          <h2>
+            Your encrypted recordings.
+          </h2>
+
+        </div>
+
+
+        <div
+          id="list"
+          class="library-list"
+        ></div>
+
+      </section>
+
+
+      <footer class="footer">
+
+        <span>
+          GHOSTVOICE
+        </span>
+
+        <span>
+          PRIVATE BY DESIGN
+        </span>
+
+        <span>
+          WAV2VEC2 + WINDOWED SIGNALS
+        </span>
+
+        <span>
+          ENCRYPTED STORAGE
+        </span>
+
+      </footer>
+
+    </section>
+
+  </main>
+
+
+  <script
+    src="/static/app.js"
+    defer
+  ></script>
+
+</body>
+
+</html>

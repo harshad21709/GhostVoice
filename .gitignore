@@ -1,0 +1,39 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+hugging_face_token.txt
+*.key
+*.pem
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local caches
+HFCache/
+.cache/
+huggingface/
+
+# Local data / generated files
+data/
+uploads/
+*.log
+
+# Backups
+*.backup
+web.backup/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
