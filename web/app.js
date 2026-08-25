@@ -70,8 +70,14 @@ const emailInput =
 const emailInput =
     $("#email");
 
+const emailInput =
+    $("#email");
+
 const message =
     $("#msg");
+
+const forgotPasswordButton =
+    $("#forgot-password");
 
 const forgotPasswordButton =
     $("#forgot-password");
@@ -330,6 +336,11 @@ function updateAuthMode() {
             emailInput.required = true;
         }
 
+        if (emailInput) {
+            emailInput.closest("label")?.classList.remove("hidden");
+            emailInput.required = true;
+        }
+
     } else {
 
         $("#auth-eyebrow")
@@ -355,6 +366,12 @@ function updateAuthMode() {
                 "autocomplete",
                 "current-password"
             );
+
+        if (emailInput) {
+            emailInput.closest("label")?.classList.add("hidden");
+            emailInput.required = false;
+            emailInput.value = "";
+        }
 
         if (emailInput) {
             emailInput.closest("label")?.classList.add("hidden");
