@@ -1,0 +1,28 @@
+name: Package GhostVoice source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Remove local secrets and runtime data
+        run: |
+          rm -f .env
+          rm -rf data .venv __pycache__
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+      - name: Create ZIP
+        run: zip -r GhostVoice-updated-source.zip . -x '.git/*' '.github/workflows/package-source.yml'
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostvoice-updated-source
+          path: GhostVoice-updated-source.zip
+          retention-days: 7
