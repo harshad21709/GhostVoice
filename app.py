@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     app_base_url: str = "http://localhost:8000"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    app_base_url: str = "http://localhost:8000"
     ffmpeg_bin: str = "ffmpeg"
     max_upload_mb: int = 200
     max_seconds: int = 180
@@ -139,6 +145,20 @@ class Audit(Base):
 
 
 Base.metadata.create_all(engine)
+
+
+def ensure_schema():
+    """Apply the small SQLite migrations needed by newer GhostVoice builds."""
+    if not database_url.startswith("sqlite:"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()}
+        if "email" not in cols:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email VARCHAR(320)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_unique ON users(email) WHERE email IS NOT NULL")
+
+
+ensure_schema()
 
 if database_url.startswith("sqlite:"):
     with engine.begin() as connection:
@@ -395,6 +415,36 @@ class Credentials(BaseModel):
     email: str | None = Field(default=None, max_length=320)
 
 
+def normalize_email(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        raise HTTPException(400, "Enter a valid email address")
+    return value
+
+
+def send_password_reset_email(email: str, token: str) -> None:
+    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
+        raise RuntimeError("Password reset email is not configured")
+    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
+    message = EmailMessage()
+    message["Subject"] = "GhostVoice password reset"
+    message["From"] = s.smtp_from
+    message["To"] = email
+    message.set_content(
+        "A GhostVoice password reset was requested.\n\n"
+        f"Reset your password: {link}\n\n"
+        "This link expires in 30 minutes and can only be used once. "
+        "If you did not request this, you can ignore this email."
+    )
+    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
+        server.starttls()
+        server.login(s.smtp_username, s.smtp_password)
+        server.send_message(message)
+    email: str | None = Field(default=None, max_length=320)
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
 
@@ -443,6 +493,26 @@ def register(request: Request, response: Response, credentials: Credentials):
         session.close()
     set_session_cookies(response, request, user_id)
     return {"username": username}
+
+
+@app.post("/api/account/recovery-email")
+@limiter.limit(s.rate_limit_auth)
+def set_recovery_email(request: Request, credentials: Credentials, user: User = Depends(current_user)):
+    require_csrf(request)
+    email = normalize_email(credentials.email)
+    if not email:
+        raise HTTPException(400, "Email is required")
+    session = db()
+    try:
+        existing = session.scalar(select(User).where(User.email == email, User.id != user.id))
+        if existing:
+            raise HTTPException(409, "Email is already registered")
+        row = session.get(User, user.id)
+        row.email = email
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
 
 
 @app.post("/api/login")
