@@ -44,6 +44,14 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
 
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GhostVoice">
+
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+
   <link
     rel="icon"
     href="/static/favicon.ico"
@@ -274,6 +282,24 @@
           </label>
 
 
+          <label class="register-only hidden">
+
+            <span><h1>
+              RECOVERY EMAIL
+            </h1></span>
+
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              maxlength="320"
+              placeholder="you@example.com"
+            >
+
+          </label>
+
+
           <label>
 
             <span><h1>
@@ -308,6 +334,14 @@
             type="button"
           >
             CREATE ACCOUNT
+          </button>
+
+          <button
+            id="forgot-password"
+            class="text-button"
+            type="button"
+          >
+            FORGOT PASSWORD?
           </button>
 
           <button
