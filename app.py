@@ -19,6 +19,8 @@ import smtplib
 from email.message import EmailMessage
 import smtplib
 from email.message import EmailMessage
+import smtplib
+from email.message import EmailMessage
 
 import jwt
 import librosa
@@ -56,6 +58,12 @@ class Settings(BaseSettings):
     storage_dir: str = "./data/encrypted"
     voice_encryption_key: str
     jwt_secret: str
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    app_base_url: str = "http://localhost:8000"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -434,6 +442,36 @@ async def security_headers(request: Request, call_next):
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     password: str = Field(min_length=12, max_length=256)
+    email: str | None = Field(default=None, max_length=320)
+
+
+def normalize_email(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        raise HTTPException(400, "Enter a valid email address")
+    return value
+
+
+def send_password_reset_email(email: str, token: str) -> None:
+    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
+        raise RuntimeError("Password reset email is not configured")
+    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
+    message = EmailMessage()
+    message["Subject"] = "GhostVoice password reset"
+    message["From"] = s.smtp_from
+    message["To"] = email
+    message.set_content(
+        "A GhostVoice password reset was requested.\n\n"
+        f"Reset your password: {link}\n\n"
+        "This link expires in 30 minutes and can only be used once. "
+        "If you did not request this, you can ignore this email."
+    )
+    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
+        server.starttls()
+        server.login(s.smtp_username, s.smtp_password)
+        server.send_message(message)
     email: str | None = Field(default=None, max_length=320)
 
 
