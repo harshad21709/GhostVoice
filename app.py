@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import urllib.request
 import urllib.error
+import smtplib
+from email.message import EmailMessage
 
 import jwt
 import librosa
@@ -48,9 +50,16 @@ class Settings(BaseSettings):
     storage_dir: str = "./data/encrypted"
     voice_encryption_key: str
     jwt_secret: str
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    app_base_url: str = "http://localhost:8000"
     ffmpeg_bin: str = "ffmpeg"
-    max_upload_mb: int = 25
-    max_seconds: int = 60
+    max_upload_mb: int = 200
+    max_seconds: int = 180
+    max_windows: int = 30
     window_seconds: float = 4
     hop_seconds: float = 2
     base_weight: float = 0.85
@@ -96,6 +105,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, nullable=True, index=True)
 
 
 class Recording(Base):
@@ -106,6 +116,16 @@ class Recording(Base):
     duration: Mapped[float] = mapped_column(Float)
     verdict: Mapped[str] = mapped_column(String(32))
     ai_probability: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -120,6 +140,20 @@ class Audit(Base):
 
 
 Base.metadata.create_all(engine)
+
+
+def ensure_schema():
+    """Apply the small SQLite migrations needed by newer GhostVoice builds."""
+    if not database_url.startswith("sqlite:"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()}
+        if "email" not in cols:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email VARCHAR(320)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_unique ON users(email) WHERE email IS NOT NULL")
+
+
+ensure_schema()
 ph = PasswordHasher()
 
 
@@ -262,7 +296,11 @@ def speech_windows(y: np.ndarray, sr: int):
         return []
     if len(y) <= n:
         return [np.pad(y, (0, n - len(y)))]
-    return [y[i:i + n] for i in range(0, len(y) - n + 1, hop)]
+    windows = [y[i:i + n] for i in range(0, len(y) - n + 1, hop)]
+    if len(windows) > s.max_windows:
+        positions = np.linspace(0, len(windows) - 1, s.max_windows, dtype=int)
+        windows = [windows[int(i)] for i in positions]
+    return windows
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -280,7 +318,8 @@ def load_model() -> None:
             print(f"[GhostVoice] Loading model: {s.base_model}")
             PROCESSOR = AutoFeatureExtractor.from_pretrained(s.base_model)
             MODEL = AutoModelForAudioClassification.from_pretrained(
-                s.base_model
+                s.base_model,
+                low_cpu_mem_usage=True,
             ).to(DEVICE).eval()
             print(f"[GhostVoice] Model loaded on {DEVICE}")
 
@@ -371,6 +410,36 @@ async def security_headers(request: Request, call_next):
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     password: str = Field(min_length=12, max_length=256)
+    email: str | None = Field(default=None, max_length=320)
+
+
+def normalize_email(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        raise HTTPException(400, "Enter a valid email address")
+    return value
+
+
+def send_password_reset_email(email: str, token: str) -> None:
+    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
+        raise RuntimeError("Password reset email is not configured")
+    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
+    message = EmailMessage()
+    message["Subject"] = "GhostVoice password reset"
+    message["From"] = s.smtp_from
+    message["To"] = email
+    message.set_content(
+        "A GhostVoice password reset was requested.\n\n"
+        f"Reset your password: {link}\n\n"
+        "This link expires in 30 minutes and can only be used once. "
+        "If you did not request this, you can ignore this email."
+    )
+    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
+        server.starttls()
+        server.login(s.smtp_username, s.smtp_password)
+        server.send_message(message)
 
 
 @app.get("/")
@@ -398,9 +467,14 @@ def csrf_api(response: Response, request: Request):
 def register(request: Request, response: Response, credentials: Credentials):
     session = db()
     try:
+        email = normalize_email(credentials.email)
+        if not email:
+            raise HTTPException(400, "Email is required for password recovery")
         if session.scalar(select(User).where(User.username == credentials.username)):
             raise HTTPException(409, "Username already exists")
-        user = User(username=credentials.username, password_hash=ph.hash(credentials.password))
+        if session.scalar(select(User).where(User.email == email)):
+            raise HTTPException(409, "Email is already registered")
+        user = User(username=credentials.username, email=email, password_hash=ph.hash(credentials.password))
         session.add(user)
         session.flush()
         username = user.username  # capture before session closes
@@ -415,6 +489,26 @@ def register(request: Request, response: Response, credentials: Credentials):
     response.set_cookie("csrf_token", secrets.token_urlsafe(32), httponly=False, secure=s.cookie_secure,
                         samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
     return {"username": username}
+
+
+@app.post("/api/account/recovery-email")
+@limiter.limit(s.rate_limit_auth)
+def set_recovery_email(request: Request, credentials: Credentials, user: User = Depends(current_user)):
+    require_csrf(request)
+    email = normalize_email(credentials.email)
+    if not email:
+        raise HTTPException(400, "Email is required")
+    session = db()
+    try:
+        existing = session.scalar(select(User).where(User.email == email, User.id != user.id))
+        if existing:
+            raise HTTPException(409, "Email is already registered")
+        row = session.get(User, user.id)
+        row.email = email
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
 
 
 @app.post("/api/login")
@@ -443,6 +537,57 @@ def login(request: Request, response: Response, credentials: Credentials):
     response.set_cookie("csrf_token", secrets.token_urlsafe(32), httponly=False, secure=s.cookie_secure,
                         samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
     return {"username": username}
+
+
+@app.post("/api/forgot-password")
+@limiter.limit("5/hour")
+def forgot_password(request: Request, credentials: Credentials):
+    # Always return the same response to avoid account enumeration.
+    email = normalize_email(credentials.email) if credentials.email else None
+    if email:
+        session = db()
+        try:
+            user = session.scalar(select(User).where(User.email == email))
+            if user:
+                token = secrets.token_urlsafe(48)
+                token_hash = hashlib.sha256(token.encode()).hexdigest()
+                now = datetime.now(timezone.utc)
+                session.query(PasswordReset).filter(PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None)).update({"used_at": now})
+                session.add(PasswordReset(user_id=user.id, token_hash=token_hash, expires_at=now + timedelta(minutes=30)))
+                session.commit()
+                try:
+                    send_password_reset_email(email, token)
+                except Exception:
+                    # Do not reveal whether an account exists. The event is still rate-limited.
+                    pass
+        finally:
+            session.close()
+    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
+
+
+@app.post("/api/reset-password")
+@limiter.limit("10/hour")
+def reset_password(request: Request, token: str = "", new_password: str = ""):
+    require_csrf(request)
+    if not token or len(token) < 40 or len(new_password) < 12 or len(new_password) > 256:
+        raise HTTPException(400, "Invalid reset request")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    session = db()
+    try:
+        now = datetime.now(timezone.utc)
+        reset = session.scalar(select(PasswordReset).where(PasswordReset.token_hash == token_hash))
+        if not reset or reset.used_at is not None or reset.expires_at.replace(tzinfo=timezone.utc) < now:
+            raise HTTPException(400, "Reset link is invalid or expired")
+        user = session.get(User, reset.user_id)
+        if not user:
+            raise HTTPException(400, "Reset link is invalid or expired")
+        user.password_hash = ph.hash(new_password)
+        reset.used_at = now
+        session.query(PasswordReset).filter(PasswordReset.user_id == user.id, PasswordReset.id != reset.id, PasswordReset.used_at.is_(None)).update({"used_at": now})
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True, "message": "Password changed. You can now sign in."}
 
 
 @app.post("/api/logout")
@@ -526,7 +671,7 @@ def recordings(user: User = Depends(current_user)):
     try:
         rows = session.scalars(select(Recording).where(Recording.user_id == user.id).order_by(Recording.created_at.desc())).all()
         return [{"id": row.file_id, "duration": row.duration, "verdict": row.verdict,
-                 "ai_probability": row.ai_probability, "created_at": row.created_at.isoformat()} for row in rows]
+                 "ai_probability": row.ai_probability, "created_at": (row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None else row.created_at).astimezone(timezone.utc).isoformat()} for row in rows]
     finally:
         session.close()
 
@@ -547,6 +692,30 @@ def get_recording(file_id: str, user: User = Depends(current_user)):
     except Exception as exc:
         raise HTTPException(404, "Not found") from exc
     return Response(data, media_type="audio/wav")
+
+
+@app.get("/api/recordings/{file_id}/download")
+def download_recording(file_id: str, user: User = Depends(current_user)):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{10,40}", file_id):
+        raise HTTPException(400, "Invalid id")
+    session = db()
+    try:
+        row = session.scalar(select(Recording).where(Recording.file_id == file_id, Recording.user_id == user.id))
+        if not row:
+            raise HTTPException(404, "Not found")
+        duration = row.duration
+    finally:
+        session.close()
+    try:
+        data = encrypted_read(file_id, user.id)
+    except Exception as exc:
+        raise HTTPException(404, "Not found") from exc
+    headers = {
+        "Content-Disposition": f'attachment; filename="ghostvoice-{file_id}.wav"',
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    return Response(data, media_type="audio/wav", headers=headers)
 
 
 @app.delete("/api/recordings/{file_id}")

@@ -20,18 +20,22 @@
     content="GhostVoice private AI voice authenticity analysis"
   >
 
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GhostVoice">
+
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+
   <link
     rel="icon"
     href="/static/favicon.ico"
     sizes="any"
   >
 
-  <link
-    rel="icon"
-    type="image/png"
-    sizes="32x32"
-    href="/static/ghostvoice-32.png"
-  >
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-48.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/ghostvoice-192.png">
 
   <title>
     GhostVoice — Private Voice Intelligence
@@ -200,6 +204,24 @@
           </label>
 
 
+          <label class="register-only hidden">
+
+            <span><h1>
+              RECOVERY EMAIL
+            </h1></span>
+
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              maxlength="320"
+              placeholder="you@example.com"
+            >
+
+          </label>
+
+
           <label>
 
             <span><h1>
@@ -234,6 +256,14 @@
             type="button"
           >
             CREATE ACCOUNT
+          </button>
+
+          <button
+            id="forgot-password"
+            class="text-button"
+            type="button"
+          >
+            FORGOT PASSWORD?
           </button>
 
 
@@ -624,7 +654,7 @@
           <small>
             Maximum recording length:
             03:00 · Maximum upload:
-            100 MB
+            200 MB
           </small>
 
         </label>
@@ -708,6 +738,7 @@
     defer
   ></script>
 
+<script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("/static/sw.js").catch(()=>{});</script>
 </body>
 
 </html>

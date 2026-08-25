@@ -1,0 +1,13 @@
+{
+  "name": "GhostVoice",
+  "short_name": "GhostVoice",
+  "description": "Private AI voice authenticity analysis",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050812",
+  "theme_color": "#050812",
+  "icons": [
+    {"src": "/static/ghostvoice-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/ghostvoice-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
