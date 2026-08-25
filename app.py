@@ -5,24 +5,12 @@ import math
 import os
 import re
 import secrets
+import smtplib
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
-import urllib.request
-import urllib.error
-import smtplib
-from email.message import EmailMessage
-import smtplib
-from email.message import EmailMessage
-import smtplib
-from email.message import EmailMessage
-import smtplib
-from email.message import EmailMessage
-import smtplib
-from email.message import EmailMessage
-import smtplib
-from email.message import EmailMessage
 
 import jwt
 import librosa
@@ -66,47 +54,17 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     app_base_url: str = "http://localhost:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    app_base_url: str = "http://localhost:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    app_base_url: str = "http://localhost:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    app_base_url: str = "http://localhost:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    app_base_url: str = "http://localhost:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    app_base_url: str = "http://localhost:8000"
     ffmpeg_bin: str = "ffmpeg"
     max_upload_mb: int = 200
     max_seconds: int = 180
     max_windows: int = 30
-    window_seconds: float = 4
-    hop_seconds: float = 2
+    window_seconds: float = 4.0
+    hop_seconds: float = 2.0
     base_weight: float = 0.85
     spectral_weight: float = 0.15
     uncertain_low: float = 0.30
     uncertain_high: float = 0.70
-    allowed_origins: str = "https://localhost:8443,https://127.0.0.1:8443"
+    allowed_origins: str = "https://localhost:8443,https://127.0.0.1:8443,http://localhost:8000,http://127.0.0.1:8000"
     cookie_secure: bool = True
     cookie_samesite: str = "strict"
     access_token_minutes: int = 60
@@ -117,21 +75,22 @@ class Settings(BaseSettings):
 
     @property
     def origins(self):
-        return [x.strip() for x in self.allowed_origins.split(",") if x.strip()]
+        return [item.strip() for item in self.allowed_origins.split(",") if item.strip()]
 
 
 s = Settings()
-STORAGE_DIR = (BASE_DIR / s.storage_dir).resolve() if not Path(s.storage_dir).is_absolute() else Path(s.storage_dir)
+
+storage_path = Path(s.storage_dir)
+STORAGE_DIR = storage_path if storage_path.is_absolute() else (BASE_DIR / storage_path).resolve()
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-# SQLite URL is made absolute when the configured URL is the local default.
 database_url = s.database_url
 if database_url.startswith("sqlite:///./"):
     database_path = (BASE_DIR / database_url[len("sqlite:///./"):]).resolve()
     database_path.parent.mkdir(parents=True, exist_ok=True)
     database_url = f"sqlite:///{database_path.as_posix()}"
 
-engine = create_engine(database_url, connect_args={"check_same_thread": False})
+engine = create_engine(database_url, connect_args={"check_same_thread": False} if database_url.startswith("sqlite:") else {})
 Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
@@ -152,7 +111,7 @@ class Recording(Base):
     __tablename__ = "recordings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     file_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     duration: Mapped[float] = mapped_column(Float)
     verdict: Mapped[str] = mapped_column(String(32))
     ai_probability: Mapped[float] = mapped_column(Float)
@@ -181,19 +140,13 @@ class Audit(Base):
 
 Base.metadata.create_all(engine)
 
+if database_url.startswith("sqlite:"):
+    with engine.begin() as connection:
+        columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(users)").fetchall()}
+        if "email" not in columns:
+            connection.exec_driver_sql("ALTER TABLE users ADD COLUMN email VARCHAR(320)")
+        connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_unique ON users(email) WHERE email IS NOT NULL")
 
-def ensure_schema():
-    """Apply the small SQLite migrations needed by newer GhostVoice builds."""
-    if not database_url.startswith("sqlite:"):
-        return
-    with engine.begin() as conn:
-        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()}
-        if "email" not in cols:
-            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email VARCHAR(320)")
-        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_unique ON users(email) WHERE email IS NOT NULL")
-
-
-ensure_schema()
 ph = PasswordHasher()
 
 
@@ -214,59 +167,48 @@ def master_key() -> bytes:
 MASTER_KEY = master_key()
 
 
-def user_key(uid: int) -> bytes:
-    return HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=None,
-        info=f"ghostvoice:v3:{uid}".encode(),
-    ).derive(MASTER_KEY)
+def user_key(user_id: int) -> bytes:
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=f"ghostvoice:v3:{user_id}".encode()).derive(MASTER_KEY)
 
 
-def encrypted_store(data: bytes, uid: int) -> str:
-    fid = secrets.token_urlsafe(20)
+def encrypted_store(data: bytes, user_id: int) -> str:
+    file_id = secrets.token_urlsafe(20)
     nonce = secrets.token_bytes(12)
-    aad = b"GV3" + str(uid).encode()
-    ciphertext = AESGCM(user_key(uid)).encrypt(nonce, data, aad)
-    (STORAGE_DIR / f"{fid}.enc").write_bytes(b"GV3" + nonce + ciphertext)
-    return fid
+    aad = b"GV3" + str(user_id).encode()
+    ciphertext = AESGCM(user_key(user_id)).encrypt(nonce, data, aad)
+    (STORAGE_DIR / f"{file_id}.enc").write_bytes(b"GV3" + nonce + ciphertext)
+    return file_id
 
 
-def encrypted_read(fid: str, uid: int) -> bytes:
-    raw = (STORAGE_DIR / f"{fid}.enc").read_bytes()
+def encrypted_read(file_id: str, user_id: int) -> bytes:
+    raw = (STORAGE_DIR / f"{file_id}.enc").read_bytes()
     if len(raw) < 16 or raw[:3] != b"GV3":
         raise ValueError("Invalid encrypted recording")
-    return AESGCM(user_key(uid)).decrypt(raw[3:15], raw[15:], b"GV3" + str(uid).encode())
+    return AESGCM(user_key(user_id)).decrypt(raw[3:15], raw[15:], b"GV3" + str(user_id).encode())
 
 
-def encrypted_delete(fid: str) -> None:
-    path = STORAGE_DIR / f"{fid}.enc"
+def encrypted_delete(file_id: str) -> None:
+    path = STORAGE_DIR / f"{file_id}.enc"
     if path.exists():
         path.unlink()
 
 
-def make_token(uid: int) -> str:
+def make_token(user_id: int) -> str:
     now = datetime.now(timezone.utc)
-    payload = {
-        "sub": str(uid),
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=s.access_token_minutes)).timestamp()),
-        "jti": secrets.token_urlsafe(16),
-    }
-    return jwt.encode(payload, s.jwt_secret, algorithm="HS256")
+    return jwt.encode({"sub": str(user_id), "iat": int(now.timestamp()), "exp": int((now + timedelta(minutes=s.access_token_minutes)).timestamp()), "jti": secrets.token_urlsafe(16)}, s.jwt_secret, algorithm="HS256")
 
 
 def current_user(request: Request) -> User:
-    raw = request.cookies.get("access_token")
-    if not raw:
+    token = request.cookies.get("access_token")
+    if not token:
         raise HTTPException(401, "Authentication required")
     try:
-        uid = int(jwt.decode(raw, s.jwt_secret, algorithms=["HS256"])["sub"])
+        user_id = int(jwt.decode(token, s.jwt_secret, algorithms=["HS256"])["sub"])
     except Exception as exc:
         raise HTTPException(401, "Invalid or expired session") from exc
     session = db()
     try:
-        user = session.get(User, uid)
+        user = session.get(User, user_id)
         if not user:
             raise HTTPException(401, "Authentication required")
         return user
@@ -281,6 +223,40 @@ def require_csrf(request: Request) -> None:
         raise HTTPException(403, "CSRF validation failed")
 
 
+def cookie_secure(request: Request) -> bool:
+    return bool(s.cookie_secure and request.url.scheme == "https")
+
+
+def set_session_cookies(response: Response, request: Request, user_id: int) -> None:
+    secure = cookie_secure(request)
+    response.set_cookie("access_token", make_token(user_id), httponly=True, secure=secure, samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
+    response.set_cookie("csrf_token", secrets.token_urlsafe(32), httponly=False, secure=secure, samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
+
+
+def normalize_email(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        raise HTTPException(400, "Enter a valid email address")
+    return value
+
+
+def send_password_reset_email(email: str, token: str) -> None:
+    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
+        raise RuntimeError("Password reset email is not configured")
+    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
+    message = EmailMessage()
+    message["Subject"] = "GhostVoice password reset"
+    message["From"] = s.smtp_from
+    message["To"] = email
+    message.set_content(f"A GhostVoice password reset was requested.\n\nReset your password: {link}\n\nThis link expires in 30 minutes and can only be used once.")
+    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
+        server.starttls()
+        server.login(s.smtp_username, s.smtp_password)
+        server.send_message(message)
+
+
 def decode_audio(raw: bytes, ext: str):
     if ext == ".wav":
         y, sr = sf.read(io.BytesIO(raw), dtype="float32", always_2d=False)
@@ -293,19 +269,11 @@ def decode_audio(raw: bytes, ext: str):
         return y, sr
 
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as source, tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as target:
-        source_path = source.name
-        target_path = target.name
+        source_path, target_path = source.name, target.name
         source.write(raw)
         source.flush()
-
     try:
-        result = subprocess.run(
-            [s.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-i", source_path,
-             "-ac", "1", "-ar", "16000", "-f", "wav", target_path, "-y"],
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
+        result = subprocess.run([s.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-i", source_path, "-ac", "1", "-ar", "16000", "-f", "wav", target_path, "-y"], capture_output=True, timeout=30, check=False)
         if result.returncode != 0:
             raise ValueError("FFmpeg could not decode this file")
         y, sr = sf.read(target_path, dtype="float32", always_2d=False)
@@ -330,13 +298,13 @@ def speech_windows(y: np.ndarray, sr: int):
     start = max(0, int(indices[0] * 256))
     end = min(len(y), int((indices[-1] + 1) * 256 + 1024))
     y = y[start:end]
-    n = int(s.window_seconds * sr)
+    window = int(s.window_seconds * sr)
     hop = int(s.hop_seconds * sr)
     if len(y) < int(0.5 * sr):
         return []
-    if len(y) <= n:
-        return [np.pad(y, (0, n - len(y)))]
-    windows = [y[i:i + n] for i in range(0, len(y) - n + 1, hop)]
+    if len(y) <= window:
+        return [np.pad(y, (0, window - len(y)))]
+    windows = [y[i:i + window] for i in range(0, len(y) - window + 1, hop)]
     if len(windows) > s.max_windows:
         positions = np.linspace(0, len(windows) - 1, s.max_windows, dtype=int)
         windows = [windows[int(i)] for i in positions]
@@ -349,7 +317,7 @@ MODEL = None
 _MODEL_LOCK = __import__("threading").Lock()
 
 
-def load_model() -> None:
+def load_model():
     global PROCESSOR, MODEL
     if MODEL is not None and PROCESSOR is not None:
         return
@@ -357,17 +325,14 @@ def load_model() -> None:
         if MODEL is None or PROCESSOR is None:
             print(f"[GhostVoice] Loading model: {s.base_model}")
             PROCESSOR = AutoFeatureExtractor.from_pretrained(s.base_model)
-            MODEL = AutoModelForAudioClassification.from_pretrained(
-                s.base_model,
-                low_cpu_mem_usage=True,
-            ).to(DEVICE).eval()
+            MODEL = AutoModelForAudioClassification.from_pretrained(s.base_model).to(DEVICE).eval()
             print(f"[GhostVoice] Model loaded on {DEVICE}")
 
 
 def base_score(y: np.ndarray) -> float:
     load_model()
     inputs = PROCESSOR(y, sampling_rate=16000, return_tensors="pt", padding=True)
-    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+    inputs = {key: value.to(DEVICE) for key, value in inputs.items()}
     with torch.inference_mode():
         probabilities = torch.softmax(MODEL(**inputs).logits, dim=-1)[0].cpu().numpy()
     return float(probabilities[1] if len(probabilities) == 2 else probabilities[-1])
@@ -386,37 +351,22 @@ def analyze(y: np.ndarray):
     windows = speech_windows(y, 16000)
     if not windows:
         raise ValueError("No usable speech detected")
-
     model_scores = [base_score(window) for window in windows]
     spectral_scores = [spectral_score(window) for window in windows]
     model_median = float(np.median(model_scores))
     spectral_median = float(np.median(spectral_scores))
     score = float(np.clip(s.base_weight * model_median + s.spectral_weight * spectral_median, 0, 1))
     spread = float(np.std(model_scores))
-    agreement = float(np.mean([(x >= 0.5) == (score >= 0.5) for x in model_scores]))
+    agreement = float(np.mean([(value >= 0.5) == (score >= 0.5) for value in model_scores]))
     confidence = max(0, min(1, agreement * (1 - spread)))
     verdict = "HUMAN" if score < s.uncertain_low else "AI_GENERATED" if score > s.uncertain_high else "UNCERTAIN"
-
-    return {
-        "verdict": verdict,
-        "ai_probability": round(score, 4),
-        "confidence": round(confidence, 4),
-        "windows": len(windows),
-        "window_scores": [round(x, 4) for x in model_scores],
-        "device": str(DEVICE),
-    }
+    return {"verdict": verdict, "ai_probability": round(score, 4), "confidence": round(confidence, 4), "windows": len(windows), "window_scores": [round(value, 4) for value in model_scores], "device": str(DEVICE)}
 
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
-app = FastAPI(title="GhostVoice 3", docs_url="/docs" if s.app_env != "production" else None)
+app = FastAPI(title="GhostVoice", docs_url="/docs" if s.app_env != "production" else None)
 app.state.limiter = limiter
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=s.origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-CSRF-Token"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=s.origins, allow_credentials=True, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "X-CSRF-Token"])
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
 
@@ -428,22 +378,14 @@ async def rate_limit_handler(request: Request, exc):
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
-    headers = {
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-        "Referrer-Policy": "no-referrer",
-        "Permissions-Policy": "microphone=(self)",
-        "Cache-Control": "no-store",
-    }
-    for key, value in headers.items():
-        response.headers[key] = value
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "microphone=(self)"
+    response.headers["Cache-Control"] = "no-store"
     if s.app_env == "production":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
-            "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-        )
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     return response
 
 
@@ -453,183 +395,13 @@ class Credentials(BaseModel):
     email: str | None = Field(default=None, max_length=320)
 
 
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-    value = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        raise HTTPException(400, "Enter a valid email address")
-    return value
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
 
 
-def send_password_reset_email(email: str, token: str) -> None:
-    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
-        raise RuntimeError("Password reset email is not configured")
-    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
-    message = EmailMessage()
-    message["Subject"] = "GhostVoice password reset"
-    message["From"] = s.smtp_from
-    message["To"] = email
-    message.set_content(
-        "A GhostVoice password reset was requested.\n\n"
-        f"Reset your password: {link}\n\n"
-        "This link expires in 30 minutes and can only be used once. "
-        "If you did not request this, you can ignore this email."
-    )
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-        server.starttls()
-        server.login(s.smtp_username, s.smtp_password)
-        server.send_message(message)
-    email: str | None = Field(default=None, max_length=320)
-
-
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-    value = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        raise HTTPException(400, "Enter a valid email address")
-    return value
-
-
-def send_password_reset_email(email: str, token: str) -> None:
-    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
-        raise RuntimeError("Password reset email is not configured")
-    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
-    message = EmailMessage()
-    message["Subject"] = "GhostVoice password reset"
-    message["From"] = s.smtp_from
-    message["To"] = email
-    message.set_content(
-        "A GhostVoice password reset was requested.\n\n"
-        f"Reset your password: {link}\n\n"
-        "This link expires in 30 minutes and can only be used once. "
-        "If you did not request this, you can ignore this email."
-    )
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-        server.starttls()
-        server.login(s.smtp_username, s.smtp_password)
-        server.send_message(message)
-    email: str | None = Field(default=None, max_length=320)
-
-
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-    value = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        raise HTTPException(400, "Enter a valid email address")
-    return value
-
-
-def send_password_reset_email(email: str, token: str) -> None:
-    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
-        raise RuntimeError("Password reset email is not configured")
-    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
-    message = EmailMessage()
-    message["Subject"] = "GhostVoice password reset"
-    message["From"] = s.smtp_from
-    message["To"] = email
-    message.set_content(
-        "A GhostVoice password reset was requested.\n\n"
-        f"Reset your password: {link}\n\n"
-        "This link expires in 30 minutes and can only be used once. "
-        "If you did not request this, you can ignore this email."
-    )
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-        server.starttls()
-        server.login(s.smtp_username, s.smtp_password)
-        server.send_message(message)
-    email: str | None = Field(default=None, max_length=320)
-
-
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-    value = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        raise HTTPException(400, "Enter a valid email address")
-    return value
-
-
-def send_password_reset_email(email: str, token: str) -> None:
-    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
-        raise RuntimeError("Password reset email is not configured")
-    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
-    message = EmailMessage()
-    message["Subject"] = "GhostVoice password reset"
-    message["From"] = s.smtp_from
-    message["To"] = email
-    message.set_content(
-        "A GhostVoice password reset was requested.\n\n"
-        f"Reset your password: {link}\n\n"
-        "This link expires in 30 minutes and can only be used once. "
-        "If you did not request this, you can ignore this email."
-    )
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-        server.starttls()
-        server.login(s.smtp_username, s.smtp_password)
-        server.send_message(message)
-    email: str | None = Field(default=None, max_length=320)
-
-
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-    value = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        raise HTTPException(400, "Enter a valid email address")
-    return value
-
-
-def send_password_reset_email(email: str, token: str) -> None:
-    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
-        raise RuntimeError("Password reset email is not configured")
-    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
-    message = EmailMessage()
-    message["Subject"] = "GhostVoice password reset"
-    message["From"] = s.smtp_from
-    message["To"] = email
-    message.set_content(
-        "A GhostVoice password reset was requested.\n\n"
-        f"Reset your password: {link}\n\n"
-        "This link expires in 30 minutes and can only be used once. "
-        "If you did not request this, you can ignore this email."
-    )
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-        server.starttls()
-        server.login(s.smtp_username, s.smtp_password)
-        server.send_message(message)
-    email: str | None = Field(default=None, max_length=320)
-
-
-def normalize_email(value: str | None) -> str | None:
-    if not value:
-        return None
-    value = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        raise HTTPException(400, "Enter a valid email address")
-    return value
-
-
-def send_password_reset_email(email: str, token: str) -> None:
-    if not all((s.smtp_host, s.smtp_username, s.smtp_password, s.smtp_from)):
-        raise RuntimeError("Password reset email is not configured")
-    link = s.app_base_url.rstrip("/") + "/?reset_token=" + token
-    message = EmailMessage()
-    message["Subject"] = "GhostVoice password reset"
-    message["From"] = s.smtp_from
-    message["To"] = email
-    message.set_content(
-        "A GhostVoice password reset was requested.\n\n"
-        f"Reset your password: {link}\n\n"
-        "This link expires in 30 minutes and can only be used once. "
-        "If you did not request this, you can ignore this email."
-    )
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as server:
-        server.starttls()
-        server.login(s.smtp_username, s.smtp_password)
-        server.send_message(message)
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=40, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
 
 
 @app.get("/")
@@ -643,23 +415,20 @@ def health():
 
 
 @app.get("/api/csrf")
-def csrf_api(response: Response, request: Request):
+def csrf_api(request: Request, response: Response):
     token = request.cookies.get("csrf_token") or secrets.token_urlsafe(32)
-    response.set_cookie(
-        "csrf_token", token, httponly=False, secure=s.cookie_secure,
-        samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/"
-    )
+    response.set_cookie("csrf_token", token, httponly=False, secure=cookie_secure(request), samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
     return {"csrf_token": token}
 
 
 @app.post("/api/register")
 @limiter.limit(s.rate_limit_auth)
 def register(request: Request, response: Response, credentials: Credentials):
+    email = normalize_email(credentials.email)
+    if not email:
+        raise HTTPException(400, "Email is required for password recovery")
     session = db()
     try:
-        email = normalize_email(credentials.email)
-        if not email:
-            raise HTTPException(400, "Email is required for password recovery")
         if session.scalar(select(User).where(User.username == credentials.username)):
             raise HTTPException(409, "Username already exists")
         if session.scalar(select(User).where(User.email == email)):
@@ -667,38 +436,13 @@ def register(request: Request, response: Response, credentials: Credentials):
         user = User(username=credentials.username, email=email, password_hash=ph.hash(credentials.password))
         session.add(user)
         session.flush()
-        username = user.username  # capture before session closes
-        user_id = user.id
-        session.add(Audit(user_id=user_id, action="register", detail="", ip=request.client.host if request.client else ""))
+        session.add(Audit(user_id=user.id, action="register", detail="", ip=request.client.host if request.client else ""))
+        user_id, username = user.id, user.username
         session.commit()
     finally:
         session.close()
-
-    response.set_cookie("access_token", make_token(user_id), httponly=True, secure=s.cookie_secure,
-                        samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
-    response.set_cookie("csrf_token", secrets.token_urlsafe(32), httponly=False, secure=s.cookie_secure,
-                        samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
+    set_session_cookies(response, request, user_id)
     return {"username": username}
-
-
-@app.post("/api/account/recovery-email")
-@limiter.limit(s.rate_limit_auth)
-def set_recovery_email(request: Request, credentials: Credentials, user: User = Depends(current_user)):
-    require_csrf(request)
-    email = normalize_email(credentials.email)
-    if not email:
-        raise HTTPException(400, "Email is required")
-    session = db()
-    try:
-        existing = session.scalar(select(User).where(User.email == email, User.id != user.id))
-        if existing:
-            raise HTTPException(409, "Email is already registered")
-        row = session.get(User, user.id)
-        row.email = email
-        session.commit()
-    finally:
-        session.close()
-    return {"ok": True}
 
 
 @app.post("/api/login")
@@ -715,69 +459,13 @@ def login(request: Request, response: Response, credentials: Credentials):
                 valid = False
         if not valid:
             raise HTTPException(401, "Invalid username or password")
-        user_id = user.id
+        user_id, username = user.id, user.username
         session.add(Audit(user_id=user_id, action="login", detail="", ip=request.client.host if request.client else ""))
         session.commit()
-        username = user.username
     finally:
         session.close()
-
-    response.set_cookie("access_token", make_token(user_id), httponly=True, secure=s.cookie_secure,
-                        samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
-    response.set_cookie("csrf_token", secrets.token_urlsafe(32), httponly=False, secure=s.cookie_secure,
-                        samesite=s.cookie_samesite, max_age=s.access_token_minutes * 60, path="/")
+    set_session_cookies(response, request, user_id)
     return {"username": username}
-
-
-@app.post("/api/forgot-password")
-@limiter.limit("5/hour")
-def forgot_password(request: Request, credentials: Credentials):
-    # Always return the same response to avoid account enumeration.
-    email = normalize_email(credentials.email) if credentials.email else None
-    if email:
-        session = db()
-        try:
-            user = session.scalar(select(User).where(User.email == email))
-            if user:
-                token = secrets.token_urlsafe(48)
-                token_hash = hashlib.sha256(token.encode()).hexdigest()
-                now = datetime.now(timezone.utc)
-                session.query(PasswordReset).filter(PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None)).update({"used_at": now})
-                session.add(PasswordReset(user_id=user.id, token_hash=token_hash, expires_at=now + timedelta(minutes=30)))
-                session.commit()
-                try:
-                    send_password_reset_email(email, token)
-                except Exception:
-                    # Do not reveal whether an account exists. The event is still rate-limited.
-                    pass
-        finally:
-            session.close()
-    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
-
-
-@app.post("/api/reset-password")
-@limiter.limit("10/hour")
-def reset_password(request: Request, token: str = "", new_password: str = ""):
-    require_csrf(request)
-    if not token or len(token) < 40 or len(new_password) < 12 or len(new_password) > 256:
-        raise HTTPException(400, "Invalid reset request")
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    session = db()
-    try:
-        now = datetime.now(timezone.utc)
-        reset = session.scalar(select(PasswordReset).where(PasswordReset.token_hash == token_hash))
-        if not reset or reset.used_at is not None or reset.expires_at.replace(tzinfo=timezone.utc) < now:
-            raise HTTPException(400, "Reset link is invalid or expired")
-        user = session.get(User, reset.user_id)
-        if not user:
-            raise HTTPException(400, "Reset link is invalid or expired")
-        user.password_hash = ph.hash(new_password)
-        reset.used_at = now
-        session.query(PasswordReset).filter(PasswordReset.user_id == user.id, PasswordReset.id != reset.id, PasswordReset.used_at.is_(None)).update({"used_at": now})
-        session.commit()
-    finally:
-        session.close()
-    return {"ok": True, "message": "Password changed. You can now sign in."}
 
 
 @app.post("/api/logout")
@@ -793,6 +481,53 @@ def me(user: User = Depends(current_user)):
     return {"id": user.id, "username": user.username}
 
 
+@app.post("/api/forgot-password")
+@limiter.limit("5/hour")
+def forgot_password(payload: ForgotPasswordRequest):
+    email = normalize_email(payload.email)
+    session = db()
+    try:
+        user = session.scalar(select(User).where(User.email == email))
+        if user:
+            token = secrets.token_urlsafe(48)
+            now = datetime.now(timezone.utc)
+            session.query(PasswordReset).filter(PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None)).update({"used_at": now})
+            session.add(PasswordReset(user_id=user.id, token_hash=hashlib.sha256(token.encode()).hexdigest(), expires_at=now + timedelta(minutes=30)))
+            session.commit()
+            try:
+                send_password_reset_email(email, token)
+            except Exception as exc:
+                print(f"[GhostVoice] reset email failed: {exc}")
+    finally:
+        session.close()
+    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
+
+
+@app.post("/api/reset-password")
+@limiter.limit("10/hour")
+def reset_password(request: Request, payload: ResetPasswordRequest):
+    require_csrf(request)
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    session = db()
+    try:
+        reset = session.scalar(select(PasswordReset).where(PasswordReset.token_hash == token_hash))
+        now = datetime.now(timezone.utc)
+        if not reset or reset.used_at is not None:
+            raise HTTPException(400, "Reset link is invalid or expired")
+        expires = reset.expires_at.replace(tzinfo=timezone.utc) if reset.expires_at.tzinfo is None else reset.expires_at
+        if expires < now:
+            raise HTTPException(400, "Reset link is invalid or expired")
+        user = session.get(User, reset.user_id)
+        if not user:
+            raise HTTPException(400, "Reset link is invalid or expired")
+        user.password_hash = ph.hash(payload.new_password)
+        reset.used_at = now
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True, "message": "Password changed. You can now sign in."}
+
+
 async def read_upload(file: UploadFile):
     ext = Path(file.filename or "").suffix.lower()
     allowed = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".aac", ".mp4", ".opus"}
@@ -804,9 +539,7 @@ async def read_upload(file: UploadFile):
     return raw, ext
 
 
-@app.post("/api/analyze")
-@limiter.limit(s.rate_limit_analyze)
-async def api_analyze(request: Request, file: UploadFile = File(...), user: User = Depends(current_user)):
+async def analyze_upload(request: Request, file: UploadFile):
     raw, ext = await read_upload(file)
     try:
         y, sr = decode_audio(raw, ext)
@@ -819,39 +552,31 @@ async def api_analyze(request: Request, file: UploadFile = File(...), user: User
         raise HTTPException(400, str(exc)) from exc
     result["duration_seconds"] = round(len(y) / sr, 2)
     result["sha256"] = hashlib.sha256(raw).hexdigest()
+    return result, raw, y, sr
+
+
+@app.post("/api/analyze")
+@limiter.limit(s.rate_limit_analyze)
+async def api_analyze(request: Request, file: UploadFile = File(...), user: User = Depends(current_user)):
+    result, _, _, _ = await analyze_upload(request, file)
     return result
 
 
 @app.post("/api/analyze-and-save")
 @limiter.limit(s.rate_limit_analyze)
 async def api_save(request: Request, file: UploadFile = File(...), user: User = Depends(current_user)):
-    raw, ext = await read_upload(file)
-    try:
-        y, sr = decode_audio(raw, ext)
-        if len(y) / sr > s.max_seconds:
-            raise HTTPException(413, f"Maximum {s.max_seconds} seconds")
-        result = analyze(y)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(400, str(exc)) from exc
-
+    result, _, y, sr = await analyze_upload(request, file)
     output = io.BytesIO()
     sf.write(output, y, 16000, format="WAV", subtype="PCM_16")
     file_id = encrypted_store(output.getvalue(), user.id)
-
     session = db()
     try:
-        session.add(Recording(file_id=file_id, user_id=user.id, duration=len(y) / sr,
-                              verdict=result["verdict"], ai_probability=result["ai_probability"]))
-        session.add(Audit(user_id=user.id, action="save_recording", detail=file_id,
-                          ip=request.client.host if request.client else ""))
+        session.add(Recording(file_id=file_id, user_id=user.id, duration=len(y) / sr, verdict=result["verdict"], ai_probability=result["ai_probability"]))
+        session.add(Audit(user_id=user.id, action="save_recording", detail=file_id, ip=request.client.host if request.client else ""))
         session.commit()
     finally:
         session.close()
-
     result["recording_id"] = file_id
-    result["duration_seconds"] = round(len(y) / sr, 2)
     return result
 
 
@@ -860,8 +585,7 @@ def recordings(user: User = Depends(current_user)):
     session = db()
     try:
         rows = session.scalars(select(Recording).where(Recording.user_id == user.id).order_by(Recording.created_at.desc())).all()
-        return [{"id": row.file_id, "duration": row.duration, "verdict": row.verdict,
-                 "ai_probability": row.ai_probability, "created_at": (row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None else row.created_at).astimezone(timezone.utc).isoformat()} for row in rows]
+        return [{"id": row.file_id, "duration": row.duration, "verdict": row.verdict, "ai_probability": row.ai_probability, "created_at": (row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None else row.created_at).astimezone(timezone.utc).isoformat()} for row in rows]
     finally:
         session.close()
 
@@ -893,19 +617,13 @@ def download_recording(file_id: str, user: User = Depends(current_user)):
         row = session.scalar(select(Recording).where(Recording.file_id == file_id, Recording.user_id == user.id))
         if not row:
             raise HTTPException(404, "Not found")
-        duration = row.duration
     finally:
         session.close()
     try:
         data = encrypted_read(file_id, user.id)
     except Exception as exc:
         raise HTTPException(404, "Not found") from exc
-    headers = {
-        "Content-Disposition": f'attachment; filename="ghostvoice-{file_id}.wav"',
-        "Cache-Control": "no-store",
-        "X-Content-Type-Options": "nosniff",
-    }
-    return Response(data, media_type="audio/wav", headers=headers)
+    return Response(data, media_type="audio/wav", headers={"Content-Disposition": f'attachment; filename="ghostvoice-{file_id}.wav"', "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @app.delete("/api/recordings/{file_id}")
@@ -918,29 +636,8 @@ def delete_recording(file_id: str, request: Request, user: User = Depends(curren
             raise HTTPException(404, "Not found")
         encrypted_delete(file_id)
         session.delete(row)
-        session.add(Audit(user_id=user.id, action="delete_recording", detail=file_id,
-                          ip=request.client.host if request.client else ""))
+        session.add(Audit(user_id=user.id, action="delete_recording", detail=file_id, ip=request.client.host if request.client else ""))
         session.commit()
     finally:
         session.close()
     return {"ok": True}
-def internet_available(timeout: float = 2.0) -> bool:
-    """
-    Check whether Internet access is currently available.
-
-    Failure is harmless: GhostVoice continues using local resources.
-    """
-    try:
-        urllib.request.urlopen(
-            "https://huggingface.co",
-            timeout=timeout,
-        )
-        return True
-    except Exception:
-        return False
-    
-ONLINE_AVAILABLE = internet_available()
-print(
-    "[GhostVoice] Internet:",
-    "AVAILABLE" if ONLINE_AVAILABLE else "OFFLINE",
-)
