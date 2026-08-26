@@ -1,0 +1,1 @@
+Assets are served from /static/ and must exist under web/.
