@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete
 
 
 def _admin_emails() -> set[str]:
@@ -22,7 +22,7 @@ def _admin_emails() -> set[str]:
 
 
 def register_admin_routes(app):
-    from app import Audit, Recording, User, current_user, db, encrypted_delete, require_csrf
+    from app import Audit, PasswordReset, Recording, User, current_user, db, encrypted_delete, require_csrf
 
     def require_admin(user: User = Depends(current_user)):
         email = (user.email or "").strip().lower()
@@ -71,26 +71,45 @@ def register_admin_routes(app):
         finally:
             session.close()
 
-    @app.delete("/api/admin/users/{user_id}")
+    @app.post("/api/admin/users/{user_id}/delete")
     def admin_delete_user(user_id: int, request: Request, user: User = Depends(require_admin)):
         require_csrf(request)
         if user_id == user.id:
             raise HTTPException(400, "Use your account settings to delete your own account")
+
         session = db()
         try:
             target = session.get(User, user_id)
             if not target:
                 raise HTTPException(404, "User not found")
-            if target.email and target.email.strip().lower() in _admin_emails():
+
+            target_email = (target.email or "").strip().lower()
+            if target_email and target_email in _admin_emails():
                 raise HTTPException(403, "Configured administrator accounts cannot be deleted here")
+
             recordings = session.scalars(select(Recording).where(Recording.user_id == target.id)).all()
             for recording in recordings:
                 encrypted_delete(recording.file_id)
                 session.delete(recording)
-            session.query(Audit).filter(Audit.user_id == target.id).delete(synchronize_session=False)
+
+            session.execute(delete(PasswordReset).where(PasswordReset.user_id == target.id))
+            session.execute(delete(Audit).where(Audit.user_id == target.id))
             session.delete(target)
-            session.add(Audit(user_id=user.id, action="admin_delete_user", detail=f"deleted_user_id={user_id}", ip=request.client.host if request.client else ""))
+            session.flush()
+
+            session.add(Audit(
+                user_id=user.id,
+                action="admin_delete_user",
+                detail=f"deleted_user_id={user_id}; deleted_recordings={len(recordings)}",
+                ip=request.client.host if request.client else "",
+            ))
             session.commit()
-            return {"ok": True}
+            return {"ok": True, "deleted_user_id": user_id, "deleted_recordings": len(recordings)}
+        except HTTPException:
+            session.rollback()
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(500, "Unable to delete account") from exc
         finally:
             session.close()
