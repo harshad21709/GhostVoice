@@ -10,10 +10,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="GhostVoice">
   <link rel="manifest" href="/static/manifest.webmanifest">
-  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/ghostvoice-icon.svg">
   <link rel="icon" href="/static/favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-48.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/static/ghostvoice-192.png">
+  <link rel="icon" type="image/svg+xml" href="/static/ghostvoice-icon.svg">
   <title>GhostVoice — Private Voice Intelligence</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/repair.css">
@@ -23,13 +22,13 @@
   <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div><div class="scanlines"></div><div class="grid"></div>
   <main class="shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="GhostVoice home"><img src="/static/ghostvoice-logo.png" alt="" class="brand-logo"><span><strong>GHOSTVOICE</strong><small>PRIVATE VOICE INTELLIGENCE</small></span></a>
+      <a class="brand" href="/" aria-label="GhostVoice home"><img src="/static/ghostvoice-logo.svg" alt="GhostVoice" class="brand-logo"><span><strong>GHOSTVOICE</strong><small>PRIVATE VOICE INTELLIGENCE</small></span></a>
       <div class="security-status"><span class="status-dot"></span><span id="status">SECURE ENGINE</span></div>
     </header>
 
     <section id="auth" class="auth-screen">
       <div class="auth-visual">
-        <div class="orb large-orb"><div class="orb-core"><img src="/static/ghostvoice-logo.png" alt="GhostVoice"></div></div>
+        <div class="orb large-orb"><div class="orb-core"><img src="/static/ghostvoice-logo.svg" alt="GhostVoice"></div></div>
         <div class="eyebrow">PRIVATE AUDIO FORENSICS</div><h1>Hear what<br><em>isn't there.</em></h1>
         <p>Analyze suspicious voices with a privacy-first detection workspace. Your saved recordings are encrypted and tied to your account.</p>
         <div class="trust-row"><span>◈ ENCRYPTED STORAGE</span><span>◈ SECURE SESSION</span><span>◈ MINIMAL METADATA</span></div>
@@ -57,7 +56,7 @@
         <div class="analysis-grid">
           <div class="detector-card glass">
             <div class="card-top"><div><span class="eyebrow">LIVE CHANNEL</span><h2>Private listening chamber</h2></div><span class="mini-lock">🔐 LOCAL SESSION</span></div>
-            <div class="visualizer-wrap"><div id="bars" class="bars" aria-hidden="true"></div><div class="detector-center"><div class="orb detector-orb"><div class="orb-ring"></div><div class="orb-core"><img src="/static/ghostvoice-logo.png" alt=""><span id="circle-status" class="circle-status">READY</span></div></div><div id="verdict" class="verdict">READY</div><div id="confidence" class="confidence">Start a private voice scan.</div><div id="recording-timer" class="recording-timer" aria-live="polite">00:00 / 03:00</div></div></div>
+            <div class="visualizer-wrap"><div id="bars" class="bars" aria-hidden="true"></div><div class="detector-center"><div class="orb detector-orb"><div class="orb-ring"></div><div class="orb-core"><img src="/static/ghostvoice-logo.svg" alt=""><span id="circle-status" class="circle-status">READY</span></div></div><div id="verdict" class="verdict">READY</div><div id="confidence" class="confidence">Start a private voice scan.</div><div id="recording-timer" class="recording-timer" aria-live="polite">00:00 / 03:00</div></div></div>
             <div class="controls"><button id="start" class="primary" type="button">START LIVE ANALYSIS</button><button id="stop" class="secondary" type="button" disabled>STOP</button><button id="save" class="secondary" type="button" disabled>SAVE ENCRYPTED</button></div>
             <div class="privacy-strip"><span>● MICROPHONE ACTIVE ONLY DURING CAPTURE</span><span>● RECORDING IS NOT SAVED UNLESS YOU CHOOSE</span></div>
           </div>
@@ -65,7 +64,7 @@
         </div>
       </section>
 
-      <section id="file" class="panel hidden"><div class="section-heading"><span class="eyebrow">RECORDED AUDIO</span><h2>Bring a voice into the chamber.</h2></div><label class="drop glass" for="fi"><input id="fi" type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/ogg,audio/webm,audio/flac,audio/aac,audio/opus"><img src="/static/ghostvoice-128.png" alt=""><strong>SELECT AUDIO</strong><span>WAV · FLAC · MP3 · M4A · OGG · WEBM · OPUS</span><small>Maximum recording length: 03:00 · Maximum upload: 200 MB</small></label><div id="fr" class="result-card glass"><span class="eyebrow">ANALYSIS RESULT</span><strong>Waiting for a recording...</strong></div></section>
+      <section id="file" class="panel hidden"><div class="section-heading"><span class="eyebrow">RECORDED AUDIO</span><h2>Bring a voice into the chamber.</h2></div><label class="drop glass" for="fi"><input id="fi" type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/ogg,audio/webm,audio/flac,audio/aac,audio/opus"><img src="/static/ghostvoice-icon.svg" alt=""><strong>SELECT AUDIO</strong><span>WAV · FLAC · MP3 · M4A · OGG · WEBM · OPUS</span><small>Maximum recording length: 03:00 · Maximum upload: 200 MB</small></label><div id="fr" class="result-card glass"><span class="eyebrow">ANALYSIS RESULT</span><strong>Waiting for a recording...</strong></div></section>
 
       <section id="library" class="panel hidden"><div class="section-heading"><span class="eyebrow">PRIVATE STORAGE</span><h2>Your encrypted recordings.</h2></div><div id="list" class="library-list"></div></section>
       <footer class="footer"><span>GHOSTVOICE</span><span>PRIVATE BY DESIGN</span><span>WAV2VEC2 + WINDOWED SIGNALS</span><span>ENCRYPTED STORAGE</span></footer>
@@ -73,6 +72,6 @@
   </main>
   <script src="/static/app.js" defer></script>
   <script src="/static/profile.js" defer></script>
-<script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("/static/sw.js").catch(()=>{});</script>
+  <script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("/static/sw.js").catch(()=>{});</script>
 </body>
 </html>
