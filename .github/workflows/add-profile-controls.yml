@@ -1,0 +1,141 @@
+name: Add GhostVoice profile controls
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Patch backend and frontend
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          # ---------------- app.py ----------------
+          p = Path('app.py')
+          app = p.read_text(encoding='utf-8')
+
+          # Settings: admin email allow-list. This is deliberately environment driven.
+          marker = '    rate_limit_analyze: str = "20/minute"\n'
+          if 'admin_emails:' not in app:
+              app = app.replace(marker, marker + '    admin_emails: str = ""\n', 1)
+
+          # User deletion helpers.
+          if 'def delete_user_recordings(' not in app:
+              marker = 'def encrypted_delete(file_id: str) -> None:\n'
+              helper = '''def delete_user_recordings(user_id: int, session) -> int:\n    rows = session.scalars(select(Recording).where(Recording.user_id == user_id)).all()\n    deleted = 0\n    for row in rows:\n        encrypted_delete(row.file_id)\n        session.delete(row)\n        deleted += 1\n    return deleted\n\n\n'''
+              app = app.replace(marker, helper + marker, 1)
+
+          # Admin determination helper.
+          if 'def is_admin_user(' not in app:
+              marker = 'def normalize_email(value: str | None) -> str | None:\n'
+              helper = '''def is_admin_user(user: User) -> bool:\n    configured = {item.strip().lower() for item in s.admin_emails.split(",") if item.strip()}\n    return bool(user.email and user.email.lower() in configured)\n\n\n'''
+              app = app.replace(marker, helper + marker, 1)
+
+          # Extend /api/me if it exists; otherwise add it before password recovery endpoints.
+          me_match = re.search(r'@app\.get\("/api/me"\).*?(?=\n\n@app\.|\Z)', app, re.S)
+          if me_match:
+              block = me_match.group(0)
+              block_new = re.sub(r'return\s+\{[^}]*\}', 'return {"username": user.username, "email": user.email, "is_admin": is_admin_user(user)}', block, count=1)
+              if block_new != block:
+                  app = app[:me_match.start()] + block_new + app[me_match.end():]
+          elif 'def get_me(' not in app:
+              insert_at = app.find('@app.post("/api/logout")')
+              if insert_at < 0:
+                  insert_at = app.find('@app.post("/api/forgot-password")')
+              endpoint = '''@app.get("/api/me")\ndef get_me(user: User = Depends(current_user)):\n    return {"username": user.username, "email": user.email, "is_admin": is_admin_user(user)}\n\n\n'''
+              if insert_at >= 0:
+                  app = app[:insert_at] + endpoint + app[insert_at:]
+
+          # Password-protected account deletion and delete-all-audio endpoint.
+          if '@app.post("/api/account/delete")' not in app:
+              marker = '@app.post("/api/logout")'
+              endpoints = '''class PasswordConfirmRequest(BaseModel):\n    password: str = Field(min_length=1, max_length=256)\n\n\n@app.post("/api/account/delete-audios")\n@limiter.limit("5/hour")\ndef delete_all_saved_audios(request: Request, user: User = Depends(current_user)):\n    require_csrf(request)\n    session = db()\n    try:\n        deleted = delete_user_recordings(user.id, session)\n        session.commit()\n    finally:\n        session.close()\n    return {"ok": True, "deleted": deleted}\n\n\n@app.post("/api/account/delete")\n@limiter.limit("3/hour")\ndef delete_account(request: Request, payload: PasswordConfirmRequest, user: User = Depends(current_user)):\n    require_csrf(request)\n    session = db()\n    try:\n        stored = session.get(User, user.id)\n        if not stored:\n            raise HTTPException(404, "Account not found")\n        try:\n            ph.verify(stored.password_hash, payload.password)\n        except (VerificationError, VerifyMismatchError):\n            raise HTTPException(403, "Incorrect password")\n        delete_user_recordings(stored.id, session)\n        session.query(PasswordReset).filter(PasswordReset.user_id == stored.id).delete(synchronize_session=False)\n        session.query(Audit).filter(Audit.user_id == stored.id).delete(synchronize_session=False)\n        session.delete(stored)\n        session.commit()\n    finally:\n        session.close()\n    response = JSONResponse({"ok": True, "message": "Account deleted."})\n    response.delete_cookie("access_token", path="/")\n    response.delete_cookie("csrf_token", path="/")\n    return response\n\n\n'''
+              app = app.replace(marker, endpoints + marker, 1)
+
+          p.write_text(app, encoding='utf-8')
+
+          # ---------------- index.html ----------------
+          p = Path('web/index.html')
+          html = p.read_text(encoding='utf-8')
+          old = '<div class="workspace-head"><div><span class="eyebrow">GHOSTVOICE / PRIVATE WORKSPACE</span><h1>Voice authenticity, without the noise.</h1><p>Use live capture or upload a recording. Results are probabilistic, not proof of identity.</p></div><button id="logout" class="logout" type="button">END SESSION</button></div>'
+          new = '''<div class="workspace-head">\n        <div><span class="eyebrow">GHOSTVOICE / PRIVATE WORKSPACE</span><h1>Voice authenticity, without the noise.</h1><p>Use live capture or upload a recording. Results are probabilistic, not proof of identity.</p></div>\n        <div class="profile-wrap">\n          <button id="profile-button" class="profile-button" type="button" aria-haspopup="menu" aria-expanded="false">\n            <span class="profile-avatar" aria-hidden="true">◉</span><span id="profile-name">PROFILE</span><span class="profile-chevron">⌄</span>\n          </button>\n          <div id="profile-menu" class="profile-menu hidden" role="menu">\n            <div class="profile-summary"><span class="eyebrow">SIGNED IN AS</span><strong id="profile-username">—</strong><small id="profile-email">—</small></div>\n            <button id="admin-panel" class="profile-item hidden" type="button" role="menuitem">▣ ADMIN PANEL</button>\n            <button id="profile-logout" class="profile-item" type="button" role="menuitem">↪ LOG OUT</button>\n            <button id="delete-audios" class="profile-item danger" type="button" role="menuitem">⌫ DELETE ALL SAVED AUDIOS</button>\n            <button id="delete-account" class="profile-item danger" type="button" role="menuitem">⊗ DELETE ACCOUNT</button>\n          </div>\n        </div>\n      </div>'''
+          if old not in html:
+              raise SystemExit('workspace header anchor not found')
+          html = html.replace(old, new, 1)
+          p.write_text(html, encoding='utf-8')
+
+          # ---------------- app.js ----------------
+          p = Path('web/app.js')
+          js = p.read_text(encoding='utf-8')
+
+          # Remove the known corrupted enhancement block if it is still present.
+          idx = js.find('\\n\\n/* =========================================================\\n   GHOSTVOICE ENHANCEMENTS')
+          if idx >= 0:
+              js = js[:idx].rstrip() + '\n'
+
+          # Add profile DOM refs.
+          anchor = 'const logoutButton = $("#logout");\n'
+          if 'const profileButton = $("#profile-button");' not in js:
+              js = js.replace(anchor, anchor + '''const profileButton = $("#profile-button");\nconst profileMenu = $("#profile-menu");\nconst profileName = $("#profile-name");\nconst profileUsername = $("#profile-username");\nconst profileEmail = $("#profile-email");\nconst profileLogout = $("#profile-logout");\nconst deleteAudiosButton = $("#delete-audios");\nconst deleteAccountButton = $("#delete-account");\nconst adminPanelButton = $("#admin-panel");\n''', 1)
+
+          # Profile state/update functions.
+          if 'async function loadProfile()' not in js:
+              anchor = 'async function loadLibrary() {'
+              profile = r'''async function loadProfile() {\n    const data = await api("/api/me");\n    if (profileName) profileName.textContent = data.username || "PROFILE";\n    if (profileUsername) profileUsername.textContent = data.username || "—";\n    if (profileEmail) profileEmail.textContent = data.email || "No recovery email";\n    if (adminPanelButton) adminPanelButton.classList.toggle("hidden", !data.is_admin);\n}\n\nfunction closeProfileMenu() {\n    profileMenu?.classList.add("hidden");\n    profileButton?.setAttribute("aria-expanded", "false");\n}\n\nprofileButton?.addEventListener("click", (event) => {\n    event.stopPropagation();\n    const hidden = profileMenu?.classList.toggle("hidden");\n    profileButton?.setAttribute("aria-expanded", String(!hidden));\n});\ndocument.addEventListener("click", (event) => {\n    if (!event.target.closest?.(".profile-wrap")) closeProfileMenu();\n});\n\nprofileLogout?.addEventListener("click", async () => {\n    profileLogout.disabled = true;\n    try { await api("/api/logout", { method: "POST" }); } catch (error) { console.error(error); }\n    closeProfileMenu();\n    stopRecording();\n    cleanupAudio();\n    stopLibraryAudio();\n    showAuth();\n    usernameInput.value = "";\n    passwordInput.value = "";\n    statusElement.textContent = "SECURE ENGINE";\n    profileLogout.disabled = false;\n});\n\ndeleteAudiosButton?.addEventListener("click", async () => {\n    if (!confirm("Delete ALL saved encrypted audios from this account? This cannot be undone.")) return;\n    deleteAudiosButton.disabled = true;\n    try {\n        const result = await api("/api/account/delete-audios", { method: "POST" });\n        setMessage(`${result.deleted || 0} saved audio(s) deleted.`);\n        await loadLibrary();\n        closeProfileMenu();\n    } catch (error) { setMessage(error.message, true); }\n    finally { deleteAudiosButton.disabled = false; }\n});\n\ndeleteAccountButton?.addEventListener("click", async () => {\n    const password = prompt("Enter this account's password to permanently delete the account:");\n    if (password === null) return;\n    if (!password) { setMessage("Password is required.", true); return; }\n    if (!confirm("PERMANENTLY DELETE THIS ACCOUNT and all saved encrypted audios? This cannot be undone.")) return;\n    deleteAccountButton.disabled = true;\n    try {\n        await api("/api/account/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });\n        stopRecording();\n        cleanupAudio();\n        stopLibraryAudio();\n        closeProfileMenu();\n        showAuth();\n        usernameInput.value = "";\n        passwordInput.value = "";\n        emailInput.value = "";\n        statusElement.textContent = "SECURE ENGINE";\n        setMessage("Account deleted successfully.");\n    } catch (error) { setMessage(error.message, true); }\n    finally { deleteAccountButton.disabled = false; }\n});\n\nadminPanelButton?.addEventListener("click", () => {\n    window.location.href = "/admin/";\n});\n\n\n'''
+              # The raw string contains escaped newlines; decode them once.
+              profile = profile.replace('\\n', '\n')
+              js = js.replace(anchor, profile + anchor, 1)
+
+          # Existing auth success should load profile.
+          js = js.replace('showApp(); statusElement.textContent = "SECURE SESSION"; await loadLibrary();', 'showApp(); statusElement.textContent = "SECURE SESSION"; await loadProfile(); await loadLibrary();', 1)
+          js = js.replace('try { await api("/api/me"); showApp(); await loadLibrary(); } catch { showAuth(); }', 'try { await api("/api/me"); showApp(); await loadProfile(); await loadLibrary(); } catch { showAuth(); }', 1)
+
+          p.write_text(js, encoding='utf-8')
+
+          # ---------------- repair.css ----------------
+          css_path = Path('web/repair.css')
+          css = css_path.read_text(encoding='utf-8') if css_path.exists() else ''
+          css += r'''
+
+/* GhostVoice profile menu */
+.profile-wrap { position: relative; z-index: 50; }
+.profile-button { display:flex; align-items:center; gap:9px; min-height:46px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:14px; background:rgba(255,255,255,.06); color:#fff; cursor:pointer; font:inherit; font-size:.74rem; font-weight:800; letter-spacing:.06em; transition:.18s ease; }
+.profile-button:hover { background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.28); transform:translateY(-1px); }
+.profile-avatar { display:grid; place-items:center; width:27px; height:27px; border-radius:50%; background:rgba(83,226,255,.12); border:1px solid rgba(83,226,255,.35); color:#63e8ff; }
+.profile-chevron { opacity:.65; font-size:1rem; }
+.profile-menu { position:absolute; top:calc(100% + 10px); right:0; width:min(310px,calc(100vw - 32px)); padding:9px; border:1px solid rgba(255,255,255,.13); border-radius:18px; background:rgba(8,12,25,.96); box-shadow:0 24px 70px rgba(0,0,0,.45); backdrop-filter:blur(18px); }
+.profile-menu.hidden { display:none; }
+.profile-summary { padding:14px 13px 12px; border-bottom:1px solid rgba(255,255,255,.09); display:grid; gap:5px; }
+.profile-summary strong { font-size:1rem; }
+.profile-summary small { opacity:.58; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.profile-item { width:100%; display:block; text-align:left; border:0; border-radius:11px; background:transparent; color:#fff; padding:12px 13px; cursor:pointer; font:inherit; font-size:.74rem; font-weight:800; letter-spacing:.04em; transition:.16s ease; }
+.profile-item:hover { background:rgba(255,255,255,.08); }
+.profile-item.danger { color:#ff8998; }
+.profile-item.danger:hover { background:rgba(255,70,90,.11); }
+@media (max-width:720px) { .workspace-head { align-items:flex-start; } .profile-button { min-height:42px; } .profile-button #profile-name { display:none; } }
+'''
+          css_path.write_text(css, encoding='utf-8')
+
+      - name: Validate
+        run: |
+          python -m py_compile app.py
+          node --check web/app.js
+
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name "ghostvoice-profile-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py web/index.html web/app.js web/repair.css .github/workflows/add-profile-controls.yml
+          git diff --cached --check
+          git commit -m "feat: add profile menu and account management" || exit 0
+          git push origin HEAD:main
