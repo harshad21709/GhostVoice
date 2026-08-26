@@ -1,0 +1,1 @@
+GhostVoice image assets are served from /static/ and must be stored as binary PNG files under web/.
