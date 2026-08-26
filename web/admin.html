@@ -2,12 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#050812"><title>GhostVoice — Admin Panel</title>
+<meta name="theme-color" content="#050812"><meta name="description" content="GhostVoice secure administration">
+<link rel="icon" href="/static/favicon.ico" type="image/x-icon"><link rel="icon" href="/static/ghostvoice-logo.png" type="image/png">
+<link rel="apple-touch-icon" href="/static/ghostvoice-logo.png">
+<title>GhostVoice — Admin Panel</title>
 <link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/admin.css">
 </head>
 <body class="admin-page">
 <main class="admin-shell">
-<header class="admin-top"><a class="brand" href="/"><img src="/static/ghostvoice-logo.png" class="brand-logo" alt=""><span><strong>GHOSTVOICE</strong><small>ADMIN CONTROL</small></span></a><div><span class="admin-badge">ADMIN</span><button id="logout" class="admin-btn secondary" type="button">LOG OUT</button></div></header>
+<header class="admin-top"><a class="brand" href="/"><img src="/static/ghostvoice-logo.png" class="brand-logo" alt="GhostVoice"><span><strong>GHOSTVOICE</strong><small>ADMIN CONTROL</small></span></a><div><span class="admin-badge">ADMIN</span><button id="logout" class="admin-btn secondary" type="button">LOG OUT</button></div></header>
 <section class="admin-hero"><div><span class="eyebrow">SECURE ADMINISTRATION</span><h1>Control center.</h1><p>Manage accounts, encrypted-storage metadata and security audit events.</p></div></section>
 <section class="stats" id="stats"><article><span>USERS</span><strong>—</strong></article><article><span>SAVED RECORDINGS</span><strong>—</strong></article><article><span>AUDIT EVENTS</span><strong>—</strong></article></section>
 <section class="admin-card"><div class="card-heading"><div><span class="eyebrow">ACCOUNT DIRECTORY</span><h2>Users</h2></div><button id="refresh" class="admin-btn" type="button">REFRESH</button></div><div class="table-wrap"><table><thead><tr><th>USER</th><th>EMAIL</th><th>CREATED</th><th>AUDIOS</th><th>ROLE</th><th></th></tr></thead><tbody id="users"><tr><td colspan="6">Loading…</td></tr></tbody></table></div></section>
