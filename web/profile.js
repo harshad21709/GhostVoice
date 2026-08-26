@@ -23,10 +23,10 @@
     menu.className = "gv-profile-wrap";
     menu.innerHTML = `
         <button id="gv-profile-button" class="gv-profile-button" type="button" aria-expanded="false" aria-haspopup="menu">
-            <span class="gv-profile-avatar">◉</span><span>PROFILE</span><span class="gv-profile-chevron">⌄</span>
+            <span class="gv-profile-avatar"><img src="/static/ghostvoice-icon.svg" alt=""></span><span>PROFILE</span><span class="gv-profile-chevron">⌄</span>
         </button>
         <div id="gv-profile-menu" class="gv-profile-menu" role="menu" hidden>
-            <div class="gv-profile-heading"><span class="eyebrow">PRIVATE ACCOUNT</span><strong id="gv-profile-name">ACCOUNT</strong><small id="gv-profile-email"></small></div>
+            <div class="gv-profile-heading"><span class="eyebrow">PRIVATE ACCOUNT</span><div class="gv-profile-identity"><img src="/static/ghostvoice-icon.svg" alt=""><div><strong id="gv-profile-name">ACCOUNT</strong><small id="gv-profile-email"></small></div></div></div>
             <a id="gv-admin-link" class="gv-profile-item gv-admin-item" href="/admin" target="_blank" rel="noopener" role="menuitem" hidden>▣ ADMIN PANEL</a>
             <button id="gv-delete-audios" class="gv-profile-item" type="button" role="menuitem">▣ DELETE ALL SAVED AUDIOS</button>
             <button id="gv-delete-account" class="gv-profile-item gv-danger-item" type="button" role="menuitem">✕ DELETE ACCOUNT</button>
